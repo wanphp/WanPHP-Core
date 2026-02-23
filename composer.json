@@ -1,7 +1,7 @@
 {
-  "name": "wanphp/libray-slim",
-  "type": "wanphp-libray",
-  "description": "wanphp Slim",
+  "name": "wanphp/core",
+  "type": "wanphp-core",
+  "description": "WanPHP Slim Core",
   "keywords": [
     "wanphp",
     "Slim"
@@ -15,22 +15,36 @@
     }
   ],
   "require": {
-    "php": "^8.1",
-    "ext-json": "*",
+    "php": "^8.4",
     "php-di/php-di": "^7.0",
     "guzzlehttp/guzzle": "^7.1",
     "slim/psr7": "^1.5",
     "slim/slim": "^4.10",
     "slim/twig-view": "^3.1",
+    "catfan/medoo": "^2.2",
     "predis/predis": "^2.3.0",
     "symfony/cache": "^v7.2.5",
     "psr/simple-cache": "^3.0.0",
+    "league/oauth2-server": "^9.0",
+    "bacon/bacon-qr-code": "^2.0.0",
+    "intervention/image": "^3.11.6",
+    "wechatpay/wechatpay": "^1.4.12",
+    "doctrine/dbal": "^4.4",
+    "ext-json": "*",
     "ext-simplexml": "*",
-    "ext-libxml": "*"
+    "ext-libxml": "*",
+    "ext-redis": "*",
+    "ext-fileinfo": "*",
+    "ext-zip": "*",
+    "ext-pdo": "*",
+    "ext-openssl": "*"
+  },
+  "require-dev": {
+    "zircote/swagger-php": "^5.5.0"
   },
   "autoload": {
     "psr-4": {
-      "Wanphp\\Libray\\Slim\\": "/"
+      "WanPHP\\Core\\": "/src"
     }
   }
 }
