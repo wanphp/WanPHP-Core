@@ -1,6 +1,6 @@
 <?php
 
-namespace Wanphp\Libray\Slim;
+namespace WanPHP\Core\Traits;
 
 use Exception;
 use GuzzleHttp\Client;

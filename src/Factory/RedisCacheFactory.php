@@ -1,12 +1,12 @@
 <?php
 
-namespace Wanphp\Libray\Slim;
+namespace WanPHP\Core\Factory;
 
 use Predis\Client;
 use Psr\Cache\CacheItemPoolInterface;
 use Symfony\Component\Cache\Adapter\RedisAdapter;
 
-class RedisCacheFactory
+final class RedisCacheFactory
 {
   private string $host;
   private int $port;
