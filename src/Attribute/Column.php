@@ -13,6 +13,8 @@ final class Column
   /**
    * @param string $type 字段类型
    * @param int|null $length
+   * @param int|null $precision
+   * @param int|null $scale
    * @param bool $nullable
    * @param mixed|null $default
    * @param bool $autoIncrement
@@ -25,6 +27,8 @@ final class Column
   public function __construct(
     public string  $type,                 // Types::STRING
     public ?int    $length = null,
+    public ?int    $precision = null,
+    public ?int    $scale = null,
     public bool    $nullable = false,
     public mixed   $default = null,
     public bool    $autoIncrement = false,

@@ -179,18 +179,28 @@ abstract class Action
     $basePath = $this->routeContext()->getBasePath();
     $view = Twig::fromRequest($this->request);
     $view->offsetSet('thisUri', $this->httpHost() . $basePath);
-    foreach (glob(ROOT_PATH . '/public/assets/{app-,style-}*.{js,css}', GLOB_BRACE) as $item) {
-      $item = str_replace(ROOT_PATH . '/public', '', $item);
-      if (str_ends_with($item, '.css')) $view->offsetSet('app_css_path', $item);
-      else $view->offsetSet('app_js_path', $item);
-    }
+
     if (!empty($basePath) && is_file(ROOT_PATH . '/var' . $basePath . '/' . $template)) {
       $template = str_replace('/', '@', $basePath) . '/' . $template;
     }
 
+    $manifestPath = ROOT_PATH . '/public/assets/.vite/manifest.json';
+    $appEntry = 'var/resources/js/app.js';
+    $spaEntry = 'var/resources/js/spa.js';
+    $cssEntry = 'style.css';
+    $manifest = file_exists($manifestPath) ? json_decode(file_get_contents($manifestPath), true) : [];
+    if (isset($manifest[$cssEntry])) $view->offsetSet('app_css_path', '/assets/' . $manifest[$cssEntry]['file']);
+
     if (!$this->request->hasHeader('HX-Request') && !str_contains($template, 'login.twig')) {
       $data['content_template'] = $template;
-      $template = 'page.twig';
+      if (str_starts_with($template, 'spa/')) {
+        // Single Page Application
+        if (isset($manifest[$spaEntry])) $view->offsetSet('app_js_path', '/assets/' . $manifest[$spaEntry]['file']);
+        $template = 'spa/page.twig';
+      } else {
+        if (isset($manifest[$appEntry])) $view->offsetSet('app_js_path', '/assets/' . $manifest[$appEntry]['file']);
+        $template = 'page.twig';
+      }
     }
 
     return $view->render($this->response, $template, $data);
@@ -265,8 +275,13 @@ abstract class Action
 </html>
 HTML;
 
+    return $this->respondHtml($html);
+  }
+
+  protected function respondHtml(string $html): Response
+  {
     $this->response->getBody()->write($html);
-    return $this->response;
+    return $this->response->withHeader('Content-Type', 'text/html');
   }
 
   protected function httpHost(): string
@@ -354,8 +369,8 @@ HTML;
    * 根据原图路径生成缩略图访问路径
    *
    * @param string $imagePath 原图访问路径，如 /image/202601/xxx.png
-   * @param string $spec      缩略规格，如 120x120 / w120 / h120 / 120x120_watermark-br-4
-   * @param string|null $forceExt  强制扩展名（可选，如 webp）
+   * @param string $spec 缩略规格，如 120x120 / w120 / h120 / 120x120_watermark-br-4
+   * @param string|null $forceExt 强制扩展名（可选，如 webp）
    * @return string
    */
   protected function thumb(string $imagePath, string $spec, ?string $forceExt = null): string
@@ -372,9 +387,9 @@ HTML;
       throw new InvalidArgumentException('Invalid image path: ' . $imagePath);
     }
 
-    $ym   = $m['ym'];
+    $ym = $m['ym'];
     $hash = $m['hash'];
-    $ext  = strtolower($forceExt ?? $m['ext']);
+    $ext = strtolower($forceExt ?? $m['ext']);
 
     return "/image/thumb/{$ym}/{$hash}/{$spec}.{$ext}";
   }

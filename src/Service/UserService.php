@@ -4,23 +4,66 @@ namespace WanPHP\Core\Service;
 
 
 use Exception;
+use GuzzleHttp\Client;
 use JetBrains\PhpStorm\ArrayShape;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
-use Psr\Log\LoggerInterface;
+use Psr\SimpleCache\CacheInterface;
+use Psr\SimpleCache\InvalidArgumentException;
 use WanPHP\Core\Database\EntityMetadata;
+use WanPHP\Core\Entities\ScopeEntity;
 use WanPHP\Core\Entities\UserEntity;
 use WanPHP\Core\Database\EntityManager;
 use WanPHP\Core\Factory\EntityMetadataFactory;
 use WanPHP\Core\Repositories\Repository;
 use WanPHP\Core\Repositories\WeiXin\WeChatBase;
+use WanPHP\Core\Traits\HttpTrait;
+use WanPHP\Core\Worker\AuditLogContext;
 
 class UserService extends Service
 {
+  use HttpTrait;
 
-  public function __construct(EntityManager $em, private readonly WeChatBase $weChatBase, private readonly LoggerInterface $logger)
+  private array $headers = [];
+  private Client $client;
+  public bool $isClient = false;
+
+  /**
+   * @throws InvalidArgumentException
+   * @throws Exception
+   */
+  public function __construct(EntityManager $em, private readonly WeChatBase $weChatBase, private readonly CacheInterface $cache)
   {
     parent::__construct($em);
+    $this->isClient = !getenv('OAUTH2_PRIVATE_KEY')
+      && getenv('OAUTH2_PUBLIC_KEY')
+      && getenv('OAUTH2_CLIENT_ID')
+      && getenv('OAUTH2_CLIENT_SECRET')
+      && getenv('OAUTH2_SERVER_URI');
+    if ($this->isClient) {
+      // 当前为客户端
+      $this->client = new Client(['base_uri' => getenv('OAUTH2_SERVER_URI') . 'api/']);
+
+      //数据库取缓存
+      $cache_access_token_key = getenv('OAUTH2_CLIENT_SECRET') . '_access_token';
+      $access_token = $this->cache->get($cache_access_token_key);
+      if (!$access_token) {
+        $data = [
+          'grant_type' => 'client_credentials',
+          'client_id' => getenv('OAUTH2_CLIENT_ID'),
+          'client_secret' => getenv('OAUTH2_CLIENT_SECRET'),
+          'scope' => ''
+        ];
+        $result = $this->request($this->client, 'POST', getenv('OAUTH2_SERVER_URI') . 'auth/accessToken', ['json' => $data]);
+        if (isset($result['access_token'])) {
+          $this->cache->set($cache_access_token_key, $result['access_token'], $result['expires_in']);
+          $access_token = $result['access_token'];
+        }
+      }
+      $this->headers = [
+        'Authorization' => 'Bearer ' . $access_token
+      ];
+    }
   }
 
   /**
@@ -41,7 +84,13 @@ class UserService extends Service
    */
   public function getUser(string $openid): array
   {
-    return $this->load($openid);
+    if ($this->isClient) {
+      return $this->request($this->client, 'POST', 'wx/client/user/get', [
+        'json' => ['openid' => $openid],
+        'headers' => $this->headers
+      ]);
+    }
+    return $this->repo()->get('openid,nickname,avatar,name,tel', ['openid' => $openid]);
   }
 
   /**
@@ -49,7 +98,13 @@ class UserService extends Service
    */
   public function getUsers($openid): array
   {
-    return $this->repo()->select('*', ['openid' => $openid]) ?: [];
+    if ($this->isClient) {
+      return $this->request($this->client, 'POST', 'wx/client/user/get', [
+        'json' => ['openid' => $openid],
+        'headers' => $this->headers
+      ]);
+    }
+    return $this->repo()->select('openid,nickname,avatar,name,tel', ['openid' => $openid]) ?: [];
   }
 
   /**
@@ -57,6 +112,12 @@ class UserService extends Service
    */
   public function getUserInfo($openid): array
   {
+    if ($this->isClient) {
+      return $this->request($this->client, 'POST', 'wx/client/user/get', [
+        'json' => ['openid' => $openid],
+        'headers' => $this->headers
+      ]);
+    }
     $users = [];
     foreach ($this->repo()->select('openid,nickname,avatar', ['openid' => $openid]) as $user) {
       $users[$user['openid']] = ['nickname' => $user['nickname'] ?: $user['openid'], 'avatar' => $user['avatar']];
@@ -105,7 +166,7 @@ class UserService extends Service
    * @return array
    * @throws Exception
    */
-  public function addUser(array $data): array
+  private function addUser(array $data): array
   {
     $openid = $this->repo()->get('openid', ['openid' => $data['openid']]);
     if (!empty($openid)) {
@@ -138,6 +199,12 @@ class UserService extends Service
   #[ArrayShape(['users' => "array", 'total' => "int"])]
   public function searchUsers(string $keyword, int $page = 0): array
   {
+    if ($this->isClient) {
+      return $this->request($this->client, 'GET', 'wx/client/user/search', [
+        'query' => ['q' => $keyword, 'page' => $page],
+        'headers' => $this->headers
+      ]);
+    }
     $where = [];
     $where['OR'] = [
       'name[~]' => $keyword,
@@ -178,6 +245,15 @@ class UserService extends Service
 
   public function oauthRedirect(Request $request, Response $response): Response
   {
+    if ($this->isClient) {
+      $queryParams = $request->getQueryParams();
+      $redirectUri = $request->getUri()->getScheme() . '://' . $request->getUri()->getHost() . $request->getUri()->getPath();
+      $_SESSION['client_redirect_uri'] = $redirectUri;
+      $scope = $queryParams['scope'] ?? '';
+      $state = $queryParams['state'] ?? '';
+      $url = getenv('OAUTH2_SERVER_URI') . 'auth/authorize?client_id=' . getenv('OAUTH2_CLIENT_ID') . '&redirect_uri=' . urlencode($redirectUri) . '&response_type=code&scope=' . $scope . '&state=' . $state;
+      return $response->withHeader('Location', $url)->withStatus(301);
+    }
     if ($this->weChatBase->webAuthorization) {
       $redirectUri = $request->getUri()->getScheme() . '://' . $request->getUri()->getHost() . $request->getUri()->getPath();
       $queryParams = $request->getQueryParams();
@@ -195,7 +271,75 @@ class UserService extends Service
       $redirectUri = 'https://mp.weixin.qq.com/mp/profile_ext?action=home&__biz=' . $this->weChatBase->uin_base64 . '&scene=124#wechat_redirect';
       return $response->withHeader('Location', $redirectUri)->withStatus(301);
     }
+  }
 
+  private function saveAccessToken(array $access_token): void
+  {
+    setcookie(
+      'access_token',
+      $access_token['access_token'],
+      [
+        'expires' => time() + $access_token['expires_in'],
+        'path' => '/' . (getenv('CLIENT_APP_PATH') ?? ''),
+        'secure' => true,
+        'httponly' => true,
+        'samesite' => 'Strict'
+      ]
+    );
+    setcookie(
+      'refresh_token',
+      $access_token['refresh_token'],
+      [
+        'expires' => time() + 2592000,
+        'path' => '/' . (getenv('CLIENT_APP_PATH') ?? ''),
+        'secure' => true,
+        'httponly' => true,
+        'samesite' => 'Strict'
+      ]
+    );
+  }
+
+  /**
+   * @throws Exception
+   */
+  public function getOauthAccessToken(string $code): array
+  {
+    if ($this->isClient) {
+      $access_token = $this->request(new Client(), 'POST', getenv('OAUTH2_SERVER_URI') . 'auth/accessToken', [
+        'json' => [
+          'grant_type' => 'authorization_code',
+          'client_id' => getenv('OAUTH2_CLIENT_ID'),
+          'client_secret' => getenv('OAUTH2_CLIENT_SECRET'),
+          'redirect_uri' => $_SESSION['client_redirect_uri'],
+          'code' => $code
+        ]
+      ]);
+      unset($_SESSION['client_redirect_uri']);
+      $this->saveAccessToken($access_token);
+      return $access_token;
+    }
+    return $this->weChatBase->getOauthAccessToken($code);
+  }
+
+  /**
+   * @throws Exception
+   */
+  public function refreshToken(string $refresh_token): array
+  {
+    if ($this->isClient) {
+      $access_token = $this->request(new Client(), 'POST', getenv('OAUTH2_SERVER_URI') . 'auth/accessToken', [
+        'json' => [
+          'grant_type' => 'refresh_token',
+          'refresh_token' => $refresh_token,
+          'client_id' => getenv('OAUTH2_CLIENT_ID'),
+          'client_secret' => getenv('OAUTH2_CLIENT_SECRET')
+        ]
+      ]);
+      $this->saveAccessToken($access_token);
+      return $access_token;
+    }
+    // 服务端刷新微信授权Token
+    return [];
   }
 
   /**
@@ -203,7 +347,15 @@ class UserService extends Service
    */
   public function getOauthUserinfo(string $code): array
   {
-    $accessToken = $this->weChatBase->getOauthAccessToken($code);
+    $accessToken = $this->getOauthAccessToken($code);
+    if ($this->isClient) {
+      unset($_SESSION['redirect_uri']);
+      return $this->request($this->client, 'POST', 'wx/client/user/get', [
+        'headers' => [
+          'Authorization' => 'Bearer ' . $accessToken['access_token']
+        ]
+      ]);
+    }
     //用户基本数据
     $data = ['openid' => $accessToken['openid']];
     //需要用户授权
@@ -221,6 +373,22 @@ class UserService extends Service
   /**
    * @throws Exception
    */
+  public function getOauthScope(array $scopeIds): array
+  {
+    if ($this->isClient) {
+      return $this->request($this->client, 'POST', 'client/getScopes', [
+        'json' => ['scopeIds' => $scopeIds],
+        'headers' => $this->headers
+      ]);
+    }
+    $scopes = $this->em->getRepository(ScopeEntity::class)->select('scopes[JSON]', ['identifier' => $scopeIds]);
+    if (!empty($scopes)) return array_merge(...$scopes);
+    return [];
+  }
+
+  /**
+   * @throws Exception
+   */
   public function userProfile(string $openid): array
   {
     return $this->repo()->get('name,tel,nickname,avatar', ['openid' => $openid]);
@@ -230,9 +398,16 @@ class UserService extends Service
    * @param array $openidArr
    * @param array $msgData
    * @return array
+   * @throws Exception
    */
   public function sendMessage(array $openidArr, array $msgData): array
   {
+    if ($this->isClient) {
+      return $this->request($this->client, 'POST', 'wx/client/sendMsg', [
+        'json' => ['users' => $openidArr, 'msgData' => $msgData],
+        'headers' => $this->headers
+      ]);
+    }
     if (empty($msgData)) return ['errCode' => '1', 'msg' => '无模板信息内容'];
     //取用户openid
     if (!empty($openidArr)) {
@@ -243,8 +418,8 @@ class UserService extends Service
         try {
           $this->weChatBase->sendTemplateMessage($msgData);
           $ok++;
-        } catch (\Exception $exception) {
-          $this->logger->error($exception->getMessage());
+        } catch (Exception $exception) {
+          AuditLogContext::markDebug($exception->getMessage(), $msgData);
         }
       }
       return ['errCode' => '0', 'ok' => $ok];

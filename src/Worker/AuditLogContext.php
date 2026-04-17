@@ -34,10 +34,10 @@ final class AuditLogContext
   }
 
   public static function markChanged(
-    string     $resource,
-    int|string $id,
-    string     $action,
-    array      $changes = []
+    string|null     $resource,
+    int|string|null $id,
+    string          $action,
+    array           $changes = []
   ): void
   {
     $ctx = self::$current;

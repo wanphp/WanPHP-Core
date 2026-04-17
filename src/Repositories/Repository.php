@@ -51,13 +51,13 @@ class Repository
           id: null,
           action: 'batch_insert',
           changes: [
+            'lastInsertId' => $id,
             'count' => $res->rowCount(),
-            'fields' => array_keys($data[0] ?? []),
+            'data' => $data,
           ]
         );
-
       } else {
-        AuditLogContext::markChanged($this->tableName, $id, 'insert', $data);
+        AuditLogContext::markChanged($this->tableName, $id, 'insert', $data[0]);
       }
     }
     return $id;

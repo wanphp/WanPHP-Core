@@ -9,6 +9,8 @@ use ReflectionClass;
 use ReflectionException;
 use WanPHP\Core\Attribute\DataTable;
 use WanPHP\Core\Attribute\Column;
+use WanPHP\Core\Attribute\Index;
+use WanPHP\Core\Attribute\Unique;
 
 final class SchemaBuilder
 {
@@ -42,7 +44,7 @@ final class SchemaBuilder
         $tableName = substr($tableName, 0, -strlen($suffix));
       }
     }
-    $tableName =  getenv('DATABASE_TABLE_PREFIX') . $tableName;
+    $tableName = getenv('DATABASE_TABLE_PREFIX') . $tableName;
 
     // 当前数据库的列
     $columns = [];
@@ -75,20 +77,28 @@ final class SchemaBuilder
         $renames[$field->renameFrom] = $name;
       }
 
-      $options = ['notnull' => !$field->nullable];
-      if ($field->autoIncrement && $field->primary) $options['autoincrement'] = true;
-      if ($field->comment !== null && $field->comment !== '') $options['comment'] = $field->comment;
-      if ($field->default !== null) $options['default'] = $field->default;
-      if ($field->length && $field->length > 0) $options['length'] = $field->length;
       if ($table->hasColumn($name)) {
         $column = $table->getColumn($name);
         $column->setType(Type::getType($field->type));
         $column->setNotnull(!$field->nullable);
+        if ($field->precision) $column->setPrecision($field->precision);
+        if ($field->scale) $column->setScale($field->scale);
         if ($field->default !== null) $column->setDefault($field->default);
         if ($field->length && $field->length > 0) $column->setLength((int)$field->length);
         if ($field->autoIncrement && $field->primary) $column->setAutoincrement(true);
         if ($field->comment !== null && $field->comment !== '') $column->setComment($field->comment);
       } else {
+        $options = ['notnull' => !$field->nullable];
+        if ($field->autoIncrement && $field->primary) $options['autoincrement'] = true;
+        if ($field->precision !== null) $options['precision'] = $field->precision;
+        if ($field->scale !== null) $options['scale'] = $field->scale;
+        if ($field->comment !== null && $field->comment !== '') $options['comment'] = $field->comment;
+        if ($field->default !== null) $options['default'] = $field->default;
+        if ($field->length && $field->length > 0) $options['length'] = $field->length;
+        if ($field->type === 'decimal') {
+          $options['precision'] ??= 10;
+          $options['scale'] ??= 2;
+        }
         $table->addColumn($name, $field->type, $options);
       }
 
@@ -97,6 +107,33 @@ final class SchemaBuilder
       if ($field->index && !$table->hasIndex('idx_' . $tableName . '_' . $name)) $table->addIndex([$name], 'idx_' . $tableName . '_' . $name);
 
       if ($field->unique || $field->index) $declaredIndexes[] = [$name];
+    }
+
+    // class index
+    foreach ($ref->getAttributes(Index::class) as $attr) {
+
+      $index = $attr->newInstance();
+
+      $name = $index->name ?? 'idx_' . $tableName . '_' . implode('_', $index->columns);
+
+      if (!$table->hasIndex($name)) {
+        $table->addIndex($index->columns, $name);
+      }
+
+      $declaredIndexes[] = $index->columns;
+    }
+
+    foreach ($ref->getAttributes(Unique::class) as $attr) {
+
+      $index = $attr->newInstance();
+
+      $name = $index->name ?? 'uniq_' . $tableName . '_' . implode('_', $index->columns);
+
+      if (!$table->hasIndex($name)) {
+        $table->addUniqueIndex($index->columns, $name);
+      }
+
+      $declaredIndexes[] = $index->columns;
     }
 
     // 唯一索引
@@ -124,7 +161,13 @@ final class SchemaBuilder
       $isDeclared = false;
 
       foreach ($declaredIndexes as $declaredIndex) {
-        if ($index->getColumns() === $declaredIndex) {
+        $indexColumns = $index->getColumns();
+        sort($indexColumns);
+
+        $declared = $declaredIndex;
+        sort($declared);
+
+        if ($indexColumns === $declared) {
           $isDeclared = true;
           break;
         }
@@ -139,8 +182,26 @@ final class SchemaBuilder
       $columnName = $column->getName();
       $renameFrom = array_keys($renames);
 
-      if (!in_array($columnName, $declaredColumns, true) && !in_array($columnName, $renameFrom, true)) {
-        $table->dropColumn($columnName);
+      if (
+        !str_contains($columnName, '__deprecated_') &&
+        !in_array($columnName, $declaredColumns, true) &&
+        !in_array($columnName, $renameFrom, true)
+      ) {
+        //$table->dropColumn($columnName);
+        // 删除相关索引
+        foreach ($indexes as $index) {
+          if ($index->isPrimary()) continue;
+
+          if (in_array($columnName, $index->getColumns(), true)) {
+            $table->dropIndex($index->getName());
+          }
+        }
+
+        $suffix = '__deprecated_' . date('Ymd');
+        $maxLength = 64;
+        $newName = substr($columnName, 0, $maxLength - strlen($suffix)) . $suffix;
+
+        $table->renameColumn($columnName, $newName);
       }
     }
   }

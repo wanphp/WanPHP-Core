@@ -2,19 +2,6 @@ import htmx from "htmx.org";
 
 export default class Page {
 
-  tableButtons = {
-    edit: `
-      <button type="button" class="btn btn-tool table-btn" data-type="edit" data-bs-toggle="tooltip" data-bs-title="修改">
-        <i class="fas fa-edit"></i>
-      </button>
-    `,
-    delete: `
-      <button type="button" class="btn btn-tool table-btn" data-type="delete" data-bs-toggle="tooltip" data-bs-title="删除">
-        <i class="fas fa-trash-alt"></i>
-      </button>
-    `
-  };
-
   constructor(name) {
     this.name = name;
     this.root = null;
@@ -59,8 +46,30 @@ export default class Page {
   initDataTable() {
   }
 
-  getTableButtons(buttons = []) {
-    return buttons.map(name => this.tableButtons[name]).filter(Boolean).join('');
+  getTableButtons(buttons = {}, btnType = 'tool') {
+    // 使用 Object.entries 直接获取 key 和 value
+    return Object.entries(buttons).map(([key, btn]) => {
+      if (!btn.icon) {
+        if (key === 'edit') btn.icon = 'fa-edit';
+        else if (key === 'delete') btn.icon = 'fa-trash-alt';
+      }
+      if (!btn.name) {
+        if (key === 'edit') btn.name = '修改';
+        else if (key === 'delete') btn.name = '删除';
+      }
+
+      const content = btn.icon ? `<i class="fas ${btn.icon}"></i>` : (btn.name || '');
+
+      return `
+      <button 
+        type="button" 
+        class="btn btn-${btn.btnType || btnType}" 
+        data-type="${key}" 
+        data-bs-toggle="tooltip" 
+        data-bs-title="${btn.name || ''}">
+        ${content}
+      </button>`.trim();
+    }).join('');
   }
 
   getTableRowData(id) {
@@ -85,28 +94,19 @@ export default class Page {
     const row = this.getTableRowData?.(tr.id);
     if (!row) return;
 
-    const handler = this.getTableActionHandler(type);
-    handler?.call(this, btn, row);
+    const action = row?.actions[type];
+    if (!action) return;
+    if (type === 'delete') this.onDelete(btn, action);
+
+    const modal = action?.modal;
+    if (modal) this.onModal(btn, action);
   }
 
-  getTableActionHandler(type) {
-    const map = {
-      edit: this.onEdit,
-      delete: this.onDelete
-    };
-    return map[type];
-  }
-
-  onEdit(target, row) {
-    if (!row?.edit) return;
-
-    const edit = row.edit;
-    const modal = edit?.modal ?? {};
-
-    const path = typeof edit === 'string' ? edit : edit?.path;
-
+  onModal(target, action) {
+    const path = action?.path;
     if (!path) return;
 
+    const modal = action.modal;
     target.dataset.modalName = modal.name ?? '';
     target.dataset.modalSize = modal.size ?? '';
     target.dataset.modalBackdrop = modal.backdrop ?? '';
@@ -114,12 +114,9 @@ export default class Page {
     htmx.ajax('get', path, {source: target, target: 'body', swap: 'beforeend'}).then();
   }
 
-  onDelete(target, row) {
-    if (!row?.delete) return;
-
-    const del = row.delete;
-    const message = del?.message ?? '是否确认要删除';
-    const path = typeof del === 'string' ? del : del?.path;
+  onDelete(target, action) {
+    const message = action?.message ?? '是否确认要删除';
+    const path = action?.path;
 
     if (!path) return;
 

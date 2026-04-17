@@ -153,7 +153,7 @@ class AuthorizeAction extends Action
               }
             }
             break;
-          case 'GET';
+          case 'GET':
             if (!isset($openid)) {
               $qrUrl = $this->urlFor('auth.qrCode');
               $html = <<<HTML

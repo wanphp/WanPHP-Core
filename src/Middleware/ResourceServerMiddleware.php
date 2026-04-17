@@ -10,7 +10,7 @@ use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 use Slim\Psr7\Response;
-use WanPHP\Core\Service\ScopeService;
+use WanPHP\Core\Service\UserService;
 use WanPHP\Core\Worker\AuditLogContext;
 
 final readonly class ResourceServerMiddleware implements MiddlewareInterface
@@ -18,9 +18,9 @@ final readonly class ResourceServerMiddleware implements MiddlewareInterface
 
   /**
    * @param ResourceServer $server
-   * @param ScopeService $scopeService
+   * @param UserService $userService
    */
-  public function __construct(private ResourceServer $server, private ScopeService $scopeService)
+  public function __construct(private ResourceServer $server, private UserService $userService)
   {
   }
 
@@ -36,8 +36,8 @@ final readonly class ResourceServerMiddleware implements MiddlewareInterface
 
       $scopeIds = $request->getAttribute('oauth_scopes');
       if (!empty($scopeIds)) {
-        $scopes = $this->scopeService->select('scopes[JSON]', ['identifier' => $scopeIds]);
-        if (empty($scopes)) $request = $request->withAttribute('oauth_scopes', array_merge(...$scopes));
+        $scopes = $this->userService->getOauthScope($scopeIds);
+        if (!empty($scopes)) $request = $request->withAttribute('oauth_scopes', $scopes);
       }
 
       return $handler->handle($request);
