@@ -191,15 +191,19 @@ abstract class Action
     $manifest = file_exists($manifestPath) ? json_decode(file_get_contents($manifestPath), true) : [];
     if (isset($manifest[$cssEntry])) $view->offsetSet('app_css_path', '/assets/' . $manifest[$cssEntry]['file']);
 
-    if (!$this->request->hasHeader('HX-Request') && !str_contains($template, 'login.twig')) {
+    if (!$this->request->hasHeader('HX-Request')) {
       $data['content_template'] = $template;
-      if (str_starts_with($template, 'spa/')) {
-        // Single Page Application
-        if (isset($manifest[$spaEntry])) $view->offsetSet('app_js_path', '/assets/' . $manifest[$spaEntry]['file']);
-        $template = 'spa/page.twig';
+      if (!str_contains($template, 'login.twig')) {
+        if (str_starts_with($template, 'spa/')) {
+          // Single Page Application
+          if (isset($manifest[$spaEntry])) $view->offsetSet('app_js_path', '/assets/' . $manifest[$spaEntry]['file']);
+          $template = 'spa/page.twig';
+        } else {
+          if (isset($manifest[$appEntry])) $view->offsetSet('app_js_path', '/assets/' . $manifest[$appEntry]['file']);
+          $template = 'page.twig';
+        }
       } else {
         if (isset($manifest[$appEntry])) $view->offsetSet('app_js_path', '/assets/' . $manifest[$appEntry]['file']);
-        $template = 'page.twig';
       }
     }
 
