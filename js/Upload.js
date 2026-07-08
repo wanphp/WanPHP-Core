@@ -43,6 +43,8 @@ export async function uploadFile(file, uploadUrl) {
 
   const md5 = await getFileMD5(file);
   const total = Math.ceil(file.size / chunkSize);
+  // 显示上传进度
+  showLoading('文件上传中...');
 
   async function uploadNext(index) {
     const chunk = file.slice(index * chunkSize, (index + 1) * chunkSize);
@@ -59,8 +61,14 @@ export async function uploadFile(file, uploadUrl) {
 
     // 后端返回下一个要传的 index（断点续传）
     if (typeof data.next_index === 'number') {
+      const progress = ((data.next_index / total) * 100).toFixed(2);
+      Swal.update({
+        title: '已上传' + progress + '%'
+      });
+      Swal.showLoading();
       return uploadNext(data.next_index);
     }
+    Swal.close();
 
     return data;
   }
