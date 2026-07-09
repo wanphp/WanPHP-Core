@@ -324,7 +324,7 @@ class UploaderService extends Service
    */
   public function setName(int $id, string $name): int
   {
-    return $this->repo()->update(['name' => $name], ['id' => $id]);
+    return $this->repo()->update(['name' => $name], ['id' => $id], false);
   }
 
   /**
