@@ -192,8 +192,8 @@ abstract class Action
     if (isset($manifest[$cssEntry])) $view->offsetSet('app_css_path', '/assets/' . $manifest[$cssEntry]['file']);
 
     if (!$this->request->hasHeader('HX-Request')) {
-      $data['content_template'] = $template;
-      if (!str_contains($template, 'login.twig')) {
+      if (!isset($data['__full_page'])) {
+        $data['content_template'] = $template;
         if (str_starts_with($template, 'spa/')) {
           // Single Page Application
           if (isset($manifest[$spaEntry])) $view->offsetSet('app_js_path', '/assets/' . $manifest[$spaEntry]['file']);
