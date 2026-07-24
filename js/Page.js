@@ -121,7 +121,7 @@ export default class Page {
     if (!path) return;
 
     window.confirmDialog(message, () => {
-      htmx.ajax('delete', path, {swap: 'none'}).then();
+      htmx.ajax('delete', path, {swap: 'none', target: target}).then();
     });
   }
 
