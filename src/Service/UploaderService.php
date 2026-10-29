@@ -332,7 +332,7 @@ class UploaderService extends Service
    */
   public function getDownloadFile(int $id): array
   {
-    $file = $this->repo()->get('name,url', ['id' => $id]);
+    $file = $this->repo()->get('name,type,url', ['id' => $id]);
     if (is_file($this->filepath . $file['url'])) return $file;
     return [];
   }
