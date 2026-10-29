@@ -25,7 +25,7 @@ class UserEntity implements UserEntityInterface
   #[Column(type: Types::STRING, length: 32, index: true)]
   #[OA\Property(description: "用户昵称", type: "string")]
   protected string $nickname;
-  #[Column(type: Types::STRING, length: 150)]
+  #[Column(type: Types::STRING, length: 200)]
   #[OA\Property(description: "用户头像", type: "string")]
   protected string $avatar;
   #[Column(type: Types::STRING, length: 16, index: true)]

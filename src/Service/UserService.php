@@ -170,7 +170,6 @@ class UserService extends Service
   {
     $openid = $this->repo()->get('openid', ['openid' => $data['openid']]);
     if (!empty($openid)) {
-      unset($data['openid']);
       $this->updateUser($openid, $data);
     } else {
       $openid = $this->repo()->insert($data);
