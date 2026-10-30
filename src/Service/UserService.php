@@ -361,7 +361,7 @@ class UserService extends Service
     if ($accessToken['scope'] == 'snsapi_userinfo') {
       $weUser = $this->weChatBase->getOauthUserinfo($accessToken['access_token'], $accessToken['openid']);
       if (isset($weUser['openid'])) {
-        $data['avatar'] = $weUser['headimgurl'];
+        $data['avatar'] = parse_url($weUser['headimgurl'], PHP_URL_PATH);
         $data['nickname'] = $weUser['nickname'];
       }
     }
