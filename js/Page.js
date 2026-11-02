@@ -98,6 +98,9 @@ export default class Page {
     if (!action) return;
     if (type === 'delete') this.onDelete(btn, action);
 
+    const promptConfirm = action?.promptConfirm;
+    if (promptConfirm) this.onPromptConfirm(btn, action);
+
     const modal = action?.modal;
     if (modal) this.onModal(btn, action);
   }
@@ -114,6 +117,21 @@ export default class Page {
     htmx.ajax('get', path, {source: target, target: 'body', swap: 'beforeend'}).then();
   }
 
+  onPromptConfirm(target, action) {
+    const path = action?.path;
+    if (!path) return;
+
+    window.promptConfirmDialog(action.promptConfirm, value => {
+      htmx.ajax('patch', path, {
+        values: {
+          value: value
+        },
+        swap: 'none',
+        target: target
+      }).then(() => this.table && this.table.reload());
+    });
+  }
+
   onDelete(target, action) {
     const message = action?.message ?? '是否确认要删除';
     const path = action?.path;
@@ -121,7 +139,7 @@ export default class Page {
     if (!path) return;
 
     window.confirmDialog(message, () => {
-      htmx.ajax('delete', path, {swap: 'none', target: target}).then();
+      htmx.ajax('delete', path, {swap: 'none', target: target}).then(() => this.table && this.table.reload());
     });
   }
 
