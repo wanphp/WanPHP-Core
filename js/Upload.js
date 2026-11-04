@@ -94,27 +94,24 @@ export async function compressImageAuto(
   }
 
   const img = await createImageBitmap(file);
-  let {width, height} = img;
+  let { width, height } = img;
 
   const isLongImage = Math.max(width / height, height / width) >= 3;
 
-  // 初始尺寸限制
+  // 计算统一缩放比例
+  let scale;
+
   if (isLongImage) {
-    // 长图保证最小边不过小
-    if (width > height) {
-      const scale = Math.min(maxShort / height, 1);
-      width = Math.round(width * scale);
-      height = maxShort;
-    } else {
-      const scale = Math.min(maxShort / width, 1);
-      width = maxShort;
-      height = Math.round(height * scale);
-    }
+    // 长图：限制短边最大尺寸
+    const shortSide = Math.min(width, height);
+    scale = Math.min(maxShort / shortSide, 1);
   } else {
-    const scale = Math.min(maxWidth / width, maxHeight / height, 1);
-    width = Math.round(width * scale);
-    height = Math.round(height * scale);
+    // 普通图片：限制最大宽高
+    scale = Math.min(maxWidth / width, maxHeight / height, 1);
   }
+
+  width = Math.round(width * scale);
+  height = Math.round(height * scale);
 
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
