@@ -98,6 +98,9 @@ export default class Page {
     if (!action) return;
     if (type === 'delete') this.onDelete(btn, action);
 
+    const confirm = action?.confirm;
+    if (confirm) this.onConfirm(btn, action);
+
     const promptConfirm = action?.promptConfirm;
     if (promptConfirm) this.onPromptConfirm(btn, action);
 
@@ -129,6 +132,15 @@ export default class Page {
         swap: 'none',
         target: target
       }).then(() => this.table && this.table.reload());
+    });
+  }
+
+  onConfirm(target, action) {
+    const path = action?.path;
+    if (!path) return;
+
+    window.confirmDialog(action.confirm, () => {
+      htmx.ajax('patch', path, {swap: 'none', target: target}).then(() => this.table && this.table.reload());
     });
   }
 
