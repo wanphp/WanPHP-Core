@@ -7,6 +7,7 @@ use finfo;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 use Slim\Psr7\UploadedFile;
+use Throwable;
 use WanPHP\Core\Database\EntityMetadata;
 use WanPHP\Core\Entities\FilesEntity;
 use WanPHP\Core\Database\EntityManager;
@@ -85,27 +86,72 @@ class UploaderService extends Service
   public function uploadFile(array $formData, UploadedFile $uploadedFile): array
   {
     //大文件分块上传
-    if (isset($formData['total']) && $formData['total'] > 0) {
+    if (isset($formData['total'])) {
+      // 获取最大文件大小，默认50MB，最大上传5G
+      $maxFileSize = filter_var(
+        getenv('APP_UPLOAD_FILE_MAX_SIZE') ?: 50,
+        FILTER_VALIDATE_INT,
+        ['options' => ['min_range' => 1, 'max_range' => 5120]]
+      );
+
+      if ($maxFileSize === false) {
+        throw new Exception('上传文件大小配置错误，最大5120MB');
+      }
+
+      $total = filter_var(
+        $formData['total'],
+        FILTER_VALIDATE_INT,
+        ['options' => ['min_range' => 2, 'max_range' => (int)ceil($maxFileSize / 2)]]
+      );
+      if ($total === false) {
+        throw new Exception('上传文件大小超过限制');
+      }
+
+      // 验证文件MD5
+      $fileMd5 = strtolower(trim((string)($formData['md5'] ?? '')));
+
+      if (!preg_match('/\A[a-f0-9]{32}\z/', $fileMd5)) {
+        throw new \InvalidArgumentException('文件MD5格式错误');
+      }
+
+      // 验证分片索引
+      $index = filter_var(
+        $formData['index'] ?? null,
+        FILTER_VALIDATE_INT,
+        ['options' => ['min_range' => 0, 'max_range' => $total - 1]]
+      );
+
+      if ($index === false) {
+        throw new Exception('分片索引错误');
+      }
+
       // 上传第一片，检查文件是否上传过
-      if ($formData['index'] == 0) {
-        $fileMd5 = $formData['md5'];
+      if ($index === 0) {
         $file = $this->repo()->get('id,type,url', ['md5' => $fileMd5]);
         if (isset($file['id'])) {
           $file['host'] = $formData['host'];
           return $file;
         }
       }
-      $tmpPath = $this->filepath . '/tmp/' . $formData['md5']; // 上传文件分片临时目录
-      $this->saveChunk($uploadedFile, $tmpPath, $formData['index']);
 
-      $uploaded = $this->isCompleted($tmpPath, $formData['total']);
+      // 分片临时目录
+      $tmpPath = $this->filepath . '/tmp/' . $fileMd5;
+
+      // 保存分片
+      $this->saveChunk($uploadedFile, $tmpPath, $index);
+
+      $uploaded = $this->isCompleted($tmpPath, $total);
       // 所有分片上传完成
       if ($uploaded === true) {
         $extension = strtolower(pathinfo($uploadedFile->getClientFilename(), PATHINFO_EXTENSION));
         $filename = sprintf('%s.%0.8s', bin2hex(random_bytes(8)), $extension);
         // 将文件合并到临时目录
         $tmpFile = $this->filepath . '/tmp/' . $filename;
-        $this->merge($tmpPath, $tmpFile, $formData['total']);
+        $this->merge($tmpPath, $tmpFile, $total);
+        if ($fileMd5 != md5_file($tmpFile)) {
+          $this->deleteInvalidFile($tmpFile);
+          throw new \InvalidArgumentException('文件MD5验证错误');
+        }
 
         // 检查上传文件
         $file = $this->validateFile($tmpFile);
@@ -119,7 +165,7 @@ class UploaderService extends Service
         $data = [
           'name' => pathinfo($uploadedFile->getClientFilename(), PATHINFO_FILENAME),
           'type' => $fileType,
-          'md5' => $formData['md5'],
+          'md5' => $fileMd5,
           'size' => filesize($this->filepath . $filePath),
           'extension' => $extension,
           'url' => $filePath,
@@ -166,37 +212,176 @@ class UploaderService extends Service
    */
   private function validateFile(string $filePath): array
   {
-    if (!is_file($filePath) || filesize($filePath) === 0) {
+    // 文件基本检查
+    if (!is_file($filePath) || is_link($filePath)) {
+      throw new Exception('文件无效');
+    }
+
+    $fileSize = filesize($filePath);
+
+    if ($fileSize === false || $fileSize <= 0) {
       $this->deleteInvalidFile($filePath);
       throw new Exception('文件无效');
     }
 
+    // 检测真实 MIME
     $mime = new finfo(FILEINFO_MIME_TYPE)->file($filePath);
     if ($mime === false || !isset($this->mimeTypes[$mime])) {
       $this->deleteInvalidFile($filePath);
-      throw new Exception("不支持的文件类型：$mime");
+      throw new Exception('不支持的文件类型');
     }
 
+    // Office 文件校验
     if (str_starts_with($mime, 'application/vnd.openxmlformats')) {
-      $zip = new ZipArchive();
-      if ($zip->open($filePath) !== true) {
+      $this->validateOfficeFile($filePath, $mime);
+    }
+
+    // 图片校验
+    if (str_starts_with($mime, 'image/')) {
+      $imageInfo = @getimagesize($filePath);
+
+      if ($imageInfo === false) {
         $this->deleteInvalidFile($filePath);
-        throw new Exception('非法 Office 文件');
+        throw new Exception('非法图片文件');
       }
-      $zip->close();
+
+      [$width, $height] = $imageInfo;
+
+      // 限制图片尺寸
+      if (
+        $width <= 0 ||
+        $height <= 0 ||
+        $width > 12000 ||
+        $height > 12000 ||
+        $width * $height > 40000000
+      ) {
+        $this->deleteInvalidFile($filePath);
+        throw new Exception('图片尺寸超出限制');
+      }
+
+      // 检查图片实际类型是否与 MIME 对应
+      $imageMime = image_type_to_mime_type($imageInfo[2]);
+
+      if ($imageMime !== $mime) {
+        $this->deleteInvalidFile($filePath);
+        throw new Exception('图片类型不匹配');
+      }
     }
 
-    if (str_starts_with($mime, 'image/') && @getimagesize($filePath) === false) {
+    // 生成保存目录
+    $type = explode('/', $mime, 2);
+
+    if ($type[0] === 'application') {
+      $savePath = '/' . $this->mimeTypes[$mime] . date('/Ym');
+    } else {
+      $savePath = '/' . $type[0] . date('/Ym');
+    }
+
+    $saveDir = $this->filepath . $savePath;
+
+    if (!is_dir($saveDir)) {
+      if (!mkdir($saveDir, 0755, true) && !is_dir($saveDir)) {
+        throw new Exception('无法创建文件保存目录');
+      }
+    }
+
+    if (is_link($saveDir)) {
+      throw new Exception('文件保存目录异常');
+    }
+
+    return [
+      'type' => $mime,
+      'ext' => $this->mimeTypes[$mime],
+      'savePath' => $savePath
+    ];
+  }
+
+  /**
+   * 校验 Office 文件内部结构
+   * @throws Exception
+   */
+  private function validateOfficeFile(string $filePath, string $mime): void
+  {
+    $requiredFiles = [
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => [
+        '[Content_Types].xml',
+        'word/document.xml'
+      ],
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' => [
+        '[Content_Types].xml',
+        'xl/workbook.xml'
+      ],
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation' => [
+        '[Content_Types].xml',
+        'ppt/presentation.xml'
+      ]
+    ];
+
+    if (!isset($requiredFiles[$mime])) {
       $this->deleteInvalidFile($filePath);
-      throw new Exception('非法图片文件');
+      throw new Exception('不支持的 Office 文件格式');
     }
 
-    $type = explode('/', $mime);
-    if ($type[0] == 'application') $filepath = '/' . $this->mimeTypes[$mime] . date('/Ym');
-    else $filepath = '/' . $type[0] . date('/Ym');
-    if (!is_dir($this->filepath . $filepath)) mkdir($this->filepath . $filepath, 0755, true);
+    $zip = new ZipArchive();
 
-    return ['type' => $mime, 'ext' => $this->mimeTypes[$mime], 'savePath' => $filepath];
+    if ($zip->open($filePath) !== true) {
+      $this->deleteInvalidFile($filePath);
+      throw new Exception('非法 Office 文件');
+    }
+
+    try {
+      $numFiles = $zip->numFiles;
+
+      // 限制压缩包内部文件数量
+      if ($numFiles <= 0 || $numFiles > 2000) {
+        throw new Exception('Office 文件内部结构异常');
+      }
+
+      $totalSize = 0;
+
+      for ($i = 0; $i < $numFiles; $i++) {
+        $stat = $zip->statIndex($i);
+
+        if ($stat === false) {
+          throw new Exception('Office 文件结构异常');
+        }
+
+        $size = $stat['size'] ?? 0;
+        $compressedSize = $stat['comp_size'] ?? 0;
+
+        $totalSize += $size;
+
+        // 限制解压后的总大小，例如200MB
+        if ($totalSize > 200 * 1024 * 1024) {
+          throw new Exception('Office 文件解压后大小超出限制');
+        }
+
+        // 限制单个文件压缩比
+        if (
+          $size > 1024 * 1024 &&
+          ($compressedSize <= 0 || $size / $compressedSize > 1000)
+        ) {
+          throw new Exception('Office 文件压缩比例异常');
+        }
+      }
+
+      foreach ($requiredFiles[$mime] as $required) {
+        if ($zip->locateName($required) === false) {
+          throw new Exception('Office 文件内部结构不完整');
+        }
+      }
+    } catch (Throwable $e) {
+      $zip->close();
+      $this->deleteInvalidFile($filePath);
+
+      if ($e instanceof Exception) {
+        throw $e;
+      }
+
+      throw new Exception('Office 文件校验失败', 0, $e);
+    }
+
+    $zip->close();
   }
 
   private function deleteInvalidFile(string $filePath): void
@@ -212,8 +397,15 @@ class UploaderService extends Service
    */
   private function saveChunk(UploadedFile $file, string $uploadTmpPath, int $chunkIndex): void
   {
-    if (!is_dir($uploadTmpPath) && !mkdir($uploadTmpPath, 0755, true)) {
-      throw new Exception('无法创建分片目录');
+    // 限制单个分片大为2MB
+    if ($file->getSize() > 2 * 1024 * 1024) {
+      throw new Exception('分片大小超出限制');
+    }
+
+    if (!is_dir($uploadTmpPath)) {
+      if (!mkdir($uploadTmpPath, 0700, true) && !is_dir($uploadTmpPath)) {
+        throw new Exception('无法创建分片目录');
+      }
     }
 
     $path = $uploadTmpPath . '/' . $chunkIndex . '.part';

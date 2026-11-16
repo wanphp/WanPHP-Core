@@ -51,7 +51,6 @@ export async function uploadFile(file, uploadUrl) {
 
     const fd = new FormData();
     fd.append('file', chunk, file.name);
-    fd.append('type', file.type);
     fd.append('md5', md5);
     fd.append('index', index);
     fd.append('total', total);
